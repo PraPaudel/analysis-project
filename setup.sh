@@ -439,13 +439,22 @@ expand_tokens() {
   printf '%s' "$text"
 }
 
+strip_utf8_bom() {
+  # Match Windows write path: pip/tomllib reject a leading UTF-8 BOM.
+  local text="$1"
+  if [[ "$text" == $'\xef\xbb\xbf'* ]]; then
+    text="${text#$'\xef\xbb\xbf'}"
+  fi
+  printf '%s' "$text"
+}
+
 write_file_from_template() {
   local rel="$1"
   local content="$2"
   local dest
   dest="${PROJECT_DIR}/$(expand_tokens "$rel")"
   mkdir -p "$(dirname "$dest")"
-  expand_tokens "$content" > "$dest"
+  strip_utf8_bom "$(expand_tokens "$content")" > "$dest"
   printf '\n' >> "$dest"
 }
 
@@ -550,7 +559,7 @@ write_project_from_templates() {
       rel="${file#"${script_dir}/template/"}"
       dest="${PROJECT_DIR}/$(expand_tokens "$rel")"
       mkdir -p "$(dirname "$dest")"
-      expand_tokens "$(cat "$file")" > "$dest"
+      strip_utf8_bom "$(expand_tokens "$(cat "$file")")" > "$dest"
       printf '\n' >> "$dest"
     done < <(find "${script_dir}/template" -type f -print0)
     return 0

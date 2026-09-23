@@ -612,6 +612,17 @@ function Expand-TemplateText {
     return $expanded
 }
 
+function Write-Utf8NoBom {
+    param(
+        [string]$Path,
+        [string]$Content
+    )
+    # Windows PowerShell 5.1 Set-Content -Encoding UTF8 writes a BOM.
+    # pip/tomllib reject pyproject.toml that starts with EF BB BF.
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, $Content, $utf8)
+}
+
 function Write-FileFromTemplate {
     param(
         [string]$RelativePath,
@@ -624,7 +635,7 @@ function Write-FileFromTemplate {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
     $expanded = Expand-TemplateText -Text $Content
-    Set-Content -Path $destination -Value $expanded -Encoding UTF8
+    Write-Utf8NoBom -Path $destination -Content $expanded
 }
 
 function Write-ProjectFromTemplates {
