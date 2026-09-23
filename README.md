@@ -1,62 +1,31 @@
 # analysis-project
 
-Windows one-liner that creates a lean conda analysis environment and a local project folder.
+This repository sets up a Python analysis environment on your machine. It installs Miniconda if you do not already have Conda, creates a Conda environment, installs the core scientific packages and neuro_py, then PyTorch (CUDA when an NVIDIA GPU and driver are present, CPU otherwise), and writes a small Python project you can edit. It asks its questions first, then runs on its own. Press Enter to accept each default: project name analysis, environment name analysis, and Python 3.12.
+
+## Windows
+
+Paste this command in PowerShell. It installs that environment and writes the project.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/PraPaudel/analysis-project/main/setup.ps1 | iex"
 ```
 
-This repo is private, so that raw `irm` URL returns 404 until the repo is public. While it is private, use GitHub CLI (already authenticated) to fetch the same script:
+## macOS and Linux
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -c "gh api -H 'Accept: application/vnd.github.raw' repos/PraPaudel/analysis-project/contents/setup.ps1 | iex"
+macOS and Linux use the same command. Paste it in a terminal.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PraPaudel/analysis-project/main/setup.sh | bash
 ```
 
-From a clone:
+## What gets installed
 
-```powershell
-.\setup.ps1
-```
+- Miniconda, if Conda is not already on the machine
+- A Conda environment
+- numpy, scipy, pandas, and the other neuro_py base packages
+- neuro_py itself from the ayalab1 checkout, with `pip install -e .`
+- PyTorch
+- CuPy only when a GPU is detected
+- A new script project (package, tests, results, docs, data)
 
-Non-interactive (accepts defaults or the values you pass; wipes an existing env without asking):
-
-```powershell
-.\setup.ps1 -Name analysis -EnvName analysis -Python 3.12 -Yes
-```
-
-Windows only. A macOS/Linux bash installer can come later. Conda stays the engine for now; uv is a later option, not this repo.
-
-## Questions (all upfront)
-
-The script asks these with `Read-Host`. Enter accepts the default.
-
-1. Project name `[analysis]`
-2. Environment name — default is the project name you just typed
-3. Python version `[3.12]`
-4. Only if that conda env already exists: Wipe and recreate? `[Y/n]` — Enter means yes. `n` exits before changing anything and leaves the env unchanged.
-
-It does not prompt for CUDA, pip vs conda, neuro_py, or a deep-learning extra. The script decides those.
-
-## What runs unattended
-
-1. Finds conda on PATH, then common Miniconda/Anaconda/Miniforge locations. If none exist, installs Miniconda3 (current user only, no admin) and accepts Anaconda channel Terms of Service.
-2. Detects an NVIDIA GPU with `nvidia-smi`. GPU: CUDA-matched PyTorch and CuPy wheels. No GPU: CPU PyTorch, CuPy skipped.
-3. Creates `conda create --name <env> python=<ver>`.
-4. Installs a lean stack (numpy pinned to `>=1.26,<2`, neuro_py base deps, nelpy with `--no-deps`). No Playwright, PyQt, Altair, or similar extras. No lightning or tensorboard.
-5. Editable-installs neuro_py with `--no-deps` from `C:\GitHub\neuro_py`, or clones https://github.com/ayalab1/neuro_py if that folder is missing.
-6. Installs `ipykernel` with pip and registers a Jupyter kernel named after the env.
-7. Installs PyTorch last (then CuPy on GPU) so later steps cannot upgrade torch.
-8. Writes `<project>/` in the current directory from `template/` (or copies embedded in `setup.ps1` when launched via `irm`/`gh api`).
-9. `git init` in the new project if needed. Does not add a remote, commit, or push.
-10. Editable-installs the new project (`pip install -e .`). Its `pyproject.toml` does not depend on torch or neuro_py.
-11. Best-effort `agentkit`: runs `C:\GitHub\agentkit\install.py init` from the project if that file exists; otherwise skips.
-12. Import check: `neuro_py` and `torch`. On GPU, `torch.cuda.is_available()` must be true.
-
-When it finishes:
-
-```text
-conda activate <env>
-cd .\<project>
-```
-
-If Miniconda was installed in this run, open a new terminal so conda is on PATH.
+No notebooks. Nothing is pushed to GitHub.

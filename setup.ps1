@@ -106,6 +106,8 @@ function Get-EmbeddedTemplates {
 
 Analysis project for the `__ENV_NAME__` conda environment (Python __PYTHON_VERSION__).
 
+Work lives in the `__PACKAGE_NAME__` package and in `tests/`. This is a scripting project.
+
 ## Activate
 
 ```text
@@ -129,6 +131,9 @@ dependencies = []
 
 [tool.setuptools]
 packages = ["__PACKAGE_NAME__"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 '@
         ".gitignore" = @'
 data/**
@@ -149,11 +154,6 @@ Keep datasets here. They stay local or on Drive and are not committed.
 # docs
 
 Project notes and documentation.
-'@
-        "notebooks\README.md" = @'
-# notebooks
-
-Exploratory notebooks. Prefer the `__ENV_NAME__` Jupyter kernel.
 '@
         "results\README.md" = @'
 # results
@@ -177,10 +177,18 @@ def test_import_package():
 
 __version__ = "0.1.0"
 '@
+        "__PACKAGE_NAME__\analysis.py" = @'
+"""Analysis helpers for __PROJECT_NAME__.
+
+Add importable functions here. Work lives in this package and in tests/.
+"""
+'@
         "__PACKAGE_NAME__\README.md" = @'
 # __PACKAGE_NAME__
 
 Python package for __PROJECT_NAME__.
+
+Add analysis as importable modules here. Tests live in `tests/`.
 '@
     }
 }

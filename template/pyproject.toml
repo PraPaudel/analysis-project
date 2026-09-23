@@ -12,3 +12,6 @@ dependencies = []
 
 [tool.setuptools]
 packages = ["__PACKAGE_NAME__"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
