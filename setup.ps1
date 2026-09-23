@@ -13,12 +13,22 @@
     Python version. Default: 3.12
 .PARAMETER Yes
     Skip prompts. Use defaults or passed values. Accept wipe of an existing env.
+    Defaults include neuro_py yes and PyTorch gpu if nvidia-smi succeeds, else cpu.
+.PARAMETER NeuroPy
+    Install neuro_py. Skip the neuro_py prompt.
+.PARAMETER NoNeuroPy
+    Skip neuro_py. Skip the neuro_py prompt.
+.PARAMETER PyTorch
+    gpu, cpu, or skip. Skip the PyTorch prompt.
 #>
 param(
     [string]$Name = "",
     [string]$EnvName = "",
     [string]$Python = "",
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$NeuroPy,
+    [switch]$NoNeuroPy,
+    [string]$PyTorch = ""
 )
 
 Set-StrictMode -Version Latest
@@ -30,6 +40,9 @@ $script:CondaPrefix = $null
 $script:MinicondaInstalledThisRun = $false
 $script:HasGpu = $false
 $script:CudaVersion = $null
+$script:CudaTag = $null
+$script:InstallNeuroPy = $true
+$script:TorchChoice = "cpu"
 $script:TorchIndexUrl = "https://download.pytorch.org/whl/cpu"
 $script:CupyPackage = $null
 $script:EnvName = $null
@@ -450,14 +463,13 @@ function Resolve-CuPyPipPackage {
     return $null
 }
 
-function Resolve-GpuSupport {
-    Write-Step "Checking for NVIDIA GPU"
+function Detect-GpuSupport {
+    $script:HasGpu = $false
+    $script:CudaVersion = $null
+    $script:CudaTag = $null
+
     $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
     if (-not $smi) {
-        Write-Host "GPU not detected"
-        $script:HasGpu = $false
-        $script:TorchIndexUrl = "https://download.pytorch.org/whl/cpu"
-        $script:CupyPackage = $null
         return
     }
 
@@ -472,10 +484,6 @@ function Resolve-GpuSupport {
     }
 
     if ($queryCode -ne 0 -or [string]::IsNullOrWhiteSpace(($query | Out-String).Trim())) {
-        Write-Host "GPU not detected"
-        $script:HasGpu = $false
-        $script:TorchIndexUrl = "https://download.pytorch.org/whl/cpu"
-        $script:CupyPackage = $null
         return
     }
 
@@ -495,12 +503,103 @@ function Resolve-GpuSupport {
         $cudaVersion = "12.4"
     }
 
-    $tag = Resolve-PyTorchPipTag -CudaVersion $cudaVersion
     $script:HasGpu = $true
     $script:CudaVersion = $cudaVersion
+    $script:CudaTag = Resolve-PyTorchPipTag -CudaVersion $cudaVersion
+}
+
+function Get-NormalizedPyTorchChoice {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+    $normalized = $Value.Trim().ToLowerInvariant()
+    if (@("gpu", "cpu", "skip") -contains $normalized) {
+        return $normalized
+    }
+    return $null
+}
+
+function Get-NeuroPyAnswer {
+    if ($NoNeuroPy) {
+        return $false
+    }
+    if ($NeuroPy) {
+        return $true
+    }
+    if ($Yes) {
+        return $true
+    }
+    $answer = Read-Host "Install neuro_py? [Y/n]"
+    if ([string]::IsNullOrWhiteSpace($answer) -or $answer.Trim() -match "^[Yy]") {
+        return $true
+    }
+    if ($answer.Trim() -match "^[Nn]") {
+        return $false
+    }
+    return $true
+}
+
+function Get-PyTorchAnswer {
+    if (-not [string]::IsNullOrWhiteSpace($PyTorch)) {
+        $fromFlag = Get-NormalizedPyTorchChoice -Value $PyTorch
+        if ($null -eq $fromFlag) {
+            Stop-Setup -Code 1 -Message "PyTorch must be gpu, cpu, or skip."
+        }
+        return $fromFlag
+    }
+    if ($Yes) {
+        if ($script:HasGpu) {
+            return "gpu"
+        }
+        return "cpu"
+    }
+    if ($script:HasGpu) {
+        $tag = $script:CudaTag
+        if ([string]::IsNullOrWhiteSpace($tag)) {
+            $tag = "cu124"
+        }
+        $answer = Read-Host "PyTorch [gpu/cpu/skip] (default gpu, CUDA $tag)"
+        if ([string]::IsNullOrWhiteSpace($answer)) {
+            return "gpu"
+        }
+        $normalized = Get-NormalizedPyTorchChoice -Value $answer
+        if ($null -ne $normalized) {
+            return $normalized
+        }
+        return "gpu"
+    }
+    $answer = Read-Host "GPU not detected. PyTorch [cpu/skip] (default cpu)"
+    if ([string]::IsNullOrWhiteSpace($answer)) {
+        return "cpu"
+    }
+    $normalized = Get-NormalizedPyTorchChoice -Value $answer
+    if ($null -ne $normalized) {
+        return $normalized
+    }
+    return "cpu"
+}
+
+function Apply-PyTorchChoice {
+    param([string]$Choice)
+    $script:TorchChoice = $Choice
+    if ($Choice -eq "skip") {
+        $script:TorchIndexUrl = $null
+        $script:CupyPackage = $null
+        return
+    }
+    if ($Choice -eq "cpu") {
+        $script:TorchIndexUrl = "https://download.pytorch.org/whl/cpu"
+        $script:CupyPackage = $null
+        return
+    }
+    $cudaVersion = $script:CudaVersion
+    if ([string]::IsNullOrWhiteSpace($cudaVersion)) {
+        $cudaVersion = "12.4"
+    }
+    $tag = Resolve-PyTorchPipTag -CudaVersion $cudaVersion
     $script:TorchIndexUrl = "https://download.pytorch.org/whl/$tag"
     $script:CupyPackage = Resolve-CuPyPipPackage -CudaVersion $cudaVersion
-    Write-Success "GPU detected ($(($query | Out-String).Trim())); CUDA $cudaVersion -> $tag"
 }
 
 function Expand-TemplateText {
@@ -625,32 +724,45 @@ function Invoke-AgentkitBestEffort {
 
 function Test-Imports {
     Write-Step "Checking imports"
-    $expectGpu = "0"
-    if ($script:HasGpu) {
-        $expectGpu = "1"
+    $lines = @(
+        "import sys",
+        "import numpy",
+        "print('numpy: %s' % numpy.__version__)",
+        "import nelpy",
+        "print('nelpy: import ok')"
+    )
+    if ($script:InstallNeuroPy) {
+        $lines += @(
+            "import neuro_py",
+            "print('neuro_py: import ok')"
+        )
     }
-    $snippet = @"
-import sys
-import neuro_py
-import torch
-cuda = bool(torch.cuda.is_available())
-print("neuro_py: import ok")
-print("torch: %s" % torch.__version__)
-print("torch.cuda.is_available: %s" % cuda)
-if sys.argv[1] == "1" and not cuda:
-    sys.exit(1)
-"@
+    if ($script:TorchChoice -ne "skip") {
+        $lines += @(
+            "import torch",
+            "cuda = bool(torch.cuda.is_available())",
+            "print('torch: %s' % torch.__version__)",
+            "print('torch.cuda.is_available: %s' % cuda)"
+        )
+        if ($script:TorchChoice -eq "gpu") {
+            $lines += @(
+                "if not cuda:",
+                "    sys.exit(1)"
+            )
+        }
+    }
+    $snippet = ($lines -join "`n") + "`n"
     $tempFile = Join-Path $env:TEMP ("analysis-import-check-" + [guid]::NewGuid().ToString() + ".py")
     Set-Content -Path $tempFile -Value $snippet -Encoding ASCII
     try {
-        & $script:CondaExe run -n $script:EnvName --no-capture-output python $tempFile $expectGpu
+        & $script:CondaExe run -n $script:EnvName --no-capture-output python $tempFile
         $code = $LASTEXITCODE
     }
     finally {
         Remove-Item -LiteralPath $tempFile -ErrorAction SilentlyContinue
     }
     if ($code -ne 0) {
-        if ($script:HasGpu) {
+        if ($script:TorchChoice -eq "gpu") {
             Stop-Setup -Code 1 -Message "Import check failed: torch.cuda.is_available() is false on the GPU path."
         }
         Stop-Setup -Code 1 -Message "Import check failed."
@@ -697,6 +809,7 @@ function Get-SetupAnswers {
 }
 
 # --- questions (all upfront) -------------------------------------------------
+Detect-GpuSupport
 $answers = Get-SetupAnswers
 $script:ProjectName = Get-SafeFolderName -Name $answers.Project
 $script:PackageName = Get-SafePackageName -Name $script:ProjectName
@@ -746,6 +859,25 @@ if ($envAlreadyExists) {
     }
 }
 
+$script:InstallNeuroPy = Get-NeuroPyAnswer
+Apply-PyTorchChoice -Choice (Get-PyTorchAnswer)
+if ($script:InstallNeuroPy) {
+    Write-Info "neuro_py: yes"
+}
+else {
+    Write-Info "neuro_py: no"
+}
+if ($script:TorchChoice -eq "gpu") {
+    $gpuLabel = $script:CudaTag
+    if ([string]::IsNullOrWhiteSpace($gpuLabel)) {
+        $gpuLabel = "cu124"
+    }
+    Write-Info "PyTorch: gpu ($gpuLabel)"
+}
+else {
+    Write-Info "PyTorch: $($script:TorchChoice)"
+}
+
 # --- unattended phase --------------------------------------------------------
 if (-not $found) {
     $found = Install-Miniconda3
@@ -754,7 +886,6 @@ if (-not $found) {
 }
 
 Initialize-CondaToS
-Resolve-GpuSupport
 
 if ($wipe) {
     Write-Step "Removing existing environment $($script:EnvName)"
@@ -787,7 +918,8 @@ $basePackages = @(
 )
 Invoke-EnvPip -PipArgs (@("install", "--no-input", "--no-cache-dir") + $basePackages)
 
-Write-Step "Installing nelpy (--no-deps)"
+Write-Step "Installing nelpy import deps, then nelpy (--no-deps)"
+Invoke-EnvPip -PipArgs @("install", "--no-input", "--no-cache-dir", "dill", "packaging")
 Invoke-EnvPip -PipArgs @(
     "install",
     "--no-deps",
@@ -796,7 +928,12 @@ Invoke-EnvPip -PipArgs @(
     "nelpy @ git+https://github.com/nelpy/nelpy.git"
 )
 
-Install-NeuroPyEditable
+if ($script:InstallNeuroPy) {
+    Install-NeuroPyEditable
+}
+else {
+    Write-Host "neuro_py was skipped"
+}
 
 Write-Step "Installing Jupyter kernel $($script:EnvName)"
 Invoke-EnvPip -PipArgs @("install", "--no-input", "--no-cache-dir", "ipykernel")
@@ -805,30 +942,36 @@ if ($LASTEXITCODE -ne 0) {
     Stop-Setup -Code 1 -Message "Failed to register the Jupyter kernel."
 }
 
-Write-Step "Installing PyTorch last"
-Invoke-EnvPip -PipArgs @(
-    "install",
-    "torch",
-    "torchvision",
-    "torchaudio",
-    "--index-url",
-    $script:TorchIndexUrl,
-    "--no-cache-dir",
-    "--no-input"
-)
-Write-Success "PyTorch installed from $($script:TorchIndexUrl)"
-
-if ($script:HasGpu) {
-    if ($script:CupyPackage) {
-        Write-Step "Installing CuPy ($($script:CupyPackage))"
-        Invoke-EnvPip -PipArgs @("install", $script:CupyPackage, "--no-cache-dir", "--no-input")
-    }
-    else {
-        Write-Host "CuPy was skipped (no wheel mapping for CUDA $($script:CudaVersion))"
-    }
+if ($script:TorchChoice -eq "skip") {
+    Write-Host "PyTorch was skipped"
+    Write-Host "CuPy was skipped"
 }
 else {
-    Write-Host "CuPy was skipped (GPU-only)"
+    Write-Step "Installing PyTorch last"
+    Invoke-EnvPip -PipArgs @(
+        "install",
+        "torch",
+        "torchvision",
+        "torchaudio",
+        "--index-url",
+        $script:TorchIndexUrl,
+        "--no-cache-dir",
+        "--no-input"
+    )
+    Write-Success "PyTorch installed from $($script:TorchIndexUrl)"
+
+    if ($script:TorchChoice -eq "gpu") {
+        if ($script:CupyPackage) {
+            Write-Step "Installing CuPy ($($script:CupyPackage))"
+            Invoke-EnvPip -PipArgs @("install", $script:CupyPackage, "--no-cache-dir", "--no-input")
+        }
+        else {
+            Write-Host "CuPy was skipped (no wheel mapping for CUDA $($script:CudaVersion))"
+        }
+    }
+    else {
+        Write-Host "CuPy was skipped (GPU-only)"
+    }
 }
 
 Write-ProjectFromTemplates

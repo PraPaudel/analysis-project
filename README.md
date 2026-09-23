@@ -1,6 +1,6 @@
 # analysis-project
 
-This repository sets up a Python analysis environment. It installs [Miniconda](https://docs.anaconda.com/miniconda/) if [Conda](https://docs.conda.io/) is missing, creates the environment, installs [NumPy](https://numpy.org/), [SciPy](https://scipy.org/), [pandas](https://pandas.pydata.org/), and the rest of the [neuro_py](https://github.com/ayalab1/neuro_py) base stack, installs neuro_py editable, then [PyTorch](https://pytorch.org/), and [CuPy](https://cupy.dev/) when an NVIDIA GPU and driver are present. Press Enter to accept the defaults: project name analysis, environment name analysis, and Python 3.12.
+This repository sets up a Python analysis environment. It installs [Miniconda](https://docs.anaconda.com/miniconda/) if [Conda](https://docs.conda.io/) is missing, creates the environment, installs [NumPy](https://numpy.org/), [SciPy](https://scipy.org/), [pandas](https://pandas.pydata.org/), and the rest of the [neuro_py](https://github.com/ayalab1/neuro_py) base stack, installs neuro_py editable, then [PyTorch](https://pytorch.org/), and [CuPy](https://cupy.dev/) when an NVIDIA GPU and driver are present. Press Enter to accept the defaults: project name analysis, environment name analysis, and Python 3.12. The script also asks whether to install neuro_py and which PyTorch build; Enter accepts the defaults.
 
 ## Windows
 

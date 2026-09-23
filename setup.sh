@@ -15,6 +15,9 @@ CONDA_PREFIX=""
 MINICONDA_INSTALLED=0
 HAS_GPU=0
 CUDA_VERSION=""
+CUDA_TAG=""
+INSTALL_NEUROPY=1
+TORCH_CHOICE="cpu"
 TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
 CUPY_PACKAGE=""
 ENV_NAME=""
@@ -27,6 +30,8 @@ NAME_FLAG=""
 ENV_FLAG=""
 PYTHON_FLAG=""
 YES=0
+NEUROPY_FLAG=""
+PYTORCH_FLAG=""
 
 step() { echo ">> $1"; }
 info() { echo "[INFO] $1"; }
@@ -39,7 +44,7 @@ die() {
 }
 
 usage() {
-  echo "Usage: setup.sh [--name NAME] [--env-name NAME] [--python VER] [--yes]"
+  echo "Usage: setup.sh [--name NAME] [--env-name NAME] [--python VER] [--yes] [--neuro-py] [--no-neuro-py] [--pytorch gpu|cpu|skip]"
 }
 
 parse_args() {
@@ -74,6 +79,23 @@ parse_args() {
         ;;
       --yes|-y)
         YES=1
+        shift
+        ;;
+      --neuro-py)
+        NEUROPY_FLAG="yes"
+        shift
+        ;;
+      --no-neuro-py)
+        NEUROPY_FLAG="no"
+        shift
+        ;;
+      --pytorch)
+        [[ $# -ge 2 ]] || die "--pytorch requires a value"
+        PYTORCH_FLAG="$2"
+        shift 2
+        ;;
+      --pytorch=*)
+        PYTORCH_FLAG="${1#*=}"
         shift
         ;;
       -h|--help)
@@ -270,29 +292,20 @@ resolve_cupy_package() {
   esac
 }
 
-resolve_gpu() {
-  step "Checking for NVIDIA GPU"
+detect_gpu() {
+  HAS_GPU=0
+  CUDA_VERSION=""
+  CUDA_TAG=""
+
   if ! command -v nvidia-smi >/dev/null 2>&1; then
-    echo "GPU not detected"
-    HAS_GPU=0
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
-    CUPY_PACKAGE=""
     return 0
   fi
 
   local query=""
   if ! query="$(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null)"; then
-    echo "GPU not detected"
-    HAS_GPU=0
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
-    CUPY_PACKAGE=""
     return 0
   fi
   if [[ -z "${query//[$' \t\n\r']/}" ]]; then
-    echo "GPU not detected"
-    HAS_GPU=0
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
-    CUPY_PACKAGE=""
     return 0
   fi
 
@@ -304,13 +317,117 @@ resolve_gpu() {
     cuda_version="12.4"
   fi
 
-  local tag
-  tag="$(resolve_pytorch_tag "$cuda_version")"
   HAS_GPU=1
   CUDA_VERSION="$cuda_version"
+  CUDA_TAG="$(resolve_pytorch_tag "$cuda_version")"
+}
+
+normalize_pytorch_choice() {
+  local value
+  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  case "$value" in
+    gpu|cpu|skip)
+      printf '%s' "$value"
+      ;;
+    *)
+      printf ''
+      ;;
+  esac
+}
+
+get_neuropy_answer() {
+  if [[ "$NEUROPY_FLAG" == "no" ]]; then
+    INSTALL_NEUROPY=0
+    return 0
+  fi
+  if [[ "$NEUROPY_FLAG" == "yes" ]]; then
+    INSTALL_NEUROPY=1
+    return 0
+  fi
+  if [[ "$YES" == "1" ]]; then
+    INSTALL_NEUROPY=1
+    return 0
+  fi
+  local answer=""
+  read -r -p "Install neuro_py? [Y/n]: " answer || true
+  if [[ -z "${answer// }" || "$answer" =~ ^[Yy] ]]; then
+    INSTALL_NEUROPY=1
+  elif [[ "$answer" =~ ^[Nn] ]]; then
+    INSTALL_NEUROPY=0
+  else
+    INSTALL_NEUROPY=1
+  fi
+}
+
+get_pytorch_answer() {
+  local choice=""
+  if [[ -n "$PYTORCH_FLAG" ]]; then
+    choice="$(normalize_pytorch_choice "$PYTORCH_FLAG")"
+    if [[ -z "$choice" ]]; then
+      die "PyTorch must be gpu, cpu, or skip."
+    fi
+    TORCH_CHOICE="$choice"
+    return 0
+  fi
+  if [[ "$YES" == "1" ]]; then
+    if [[ "$HAS_GPU" == "1" ]]; then
+      TORCH_CHOICE="gpu"
+    else
+      TORCH_CHOICE="cpu"
+    fi
+    return 0
+  fi
+  local answer=""
+  if [[ "$HAS_GPU" == "1" ]]; then
+    local tag="$CUDA_TAG"
+    if [[ -z "$tag" ]]; then
+      tag="cu124"
+    fi
+    read -r -p "PyTorch [gpu/cpu/skip] (default gpu, CUDA ${tag}): " answer || true
+    if [[ -z "${answer// }" ]]; then
+      TORCH_CHOICE="gpu"
+      return 0
+    fi
+    choice="$(normalize_pytorch_choice "$answer")"
+    if [[ -n "$choice" ]]; then
+      TORCH_CHOICE="$choice"
+    else
+      TORCH_CHOICE="gpu"
+    fi
+    return 0
+  fi
+  read -r -p "GPU not detected. PyTorch [cpu/skip] (default cpu): " answer || true
+  if [[ -z "${answer// }" ]]; then
+    TORCH_CHOICE="cpu"
+    return 0
+  fi
+  choice="$(normalize_pytorch_choice "$answer")"
+  if [[ -n "$choice" ]]; then
+    TORCH_CHOICE="$choice"
+  else
+    TORCH_CHOICE="cpu"
+  fi
+}
+
+apply_pytorch_choice() {
+  if [[ "$TORCH_CHOICE" == "skip" ]]; then
+    TORCH_INDEX_URL=""
+    CUPY_PACKAGE=""
+    return 0
+  fi
+  if [[ "$TORCH_CHOICE" == "cpu" ]]; then
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
+    CUPY_PACKAGE=""
+    return 0
+  fi
+  local cuda_version="$CUDA_VERSION"
+  if [[ -z "$cuda_version" ]]; then
+    cuda_version="12.4"
+  fi
+  local tag
+  tag="$(resolve_pytorch_tag "$cuda_version")"
   TORCH_INDEX_URL="https://download.pytorch.org/whl/${tag}"
   CUPY_PACKAGE="$(resolve_cupy_package "$cuda_version")"
-  success "GPU detected (${query//$'\n'/; }); CUDA ${cuda_version} -> ${tag}"
 }
 
 expand_tokens() {
@@ -484,30 +601,36 @@ invoke_agentkit_best_effort() {
 
 test_imports() {
   step "Checking imports"
-  local expect_gpu="0"
-  if [[ "$HAS_GPU" == "1" ]]; then
-    expect_gpu="1"
-  fi
   local tmp
   tmp="$(mktemp)"
-  cat > "$tmp" <<'PY'
-import sys
-import neuro_py
-import torch
-cuda = bool(torch.cuda.is_available())
-print("neuro_py: import ok")
-print("torch: %s" % torch.__version__)
-print("torch.cuda.is_available: %s" % cuda)
-if sys.argv[1] == "1" and not cuda:
-    sys.exit(1)
-PY
+  {
+    echo "import sys"
+    echo "import numpy"
+    echo "print('numpy: %s' % numpy.__version__)"
+    echo "import nelpy"
+    echo "print('nelpy: import ok')"
+    if [[ "$INSTALL_NEUROPY" == "1" ]]; then
+      echo "import neuro_py"
+      echo "print('neuro_py: import ok')"
+    fi
+    if [[ "$TORCH_CHOICE" != "skip" ]]; then
+      echo "import torch"
+      echo "cuda = bool(torch.cuda.is_available())"
+      echo "print('torch: %s' % torch.__version__)"
+      echo "print('torch.cuda.is_available: %s' % cuda)"
+      if [[ "$TORCH_CHOICE" == "gpu" ]]; then
+        echo "if not cuda:"
+        echo "    sys.exit(1)"
+      fi
+    fi
+  } > "$tmp"
   local code=0
-  if ! "$CONDA" run -n "$ENV_NAME" --no-capture-output python "$tmp" "$expect_gpu"; then
+  if ! "$CONDA" run -n "$ENV_NAME" --no-capture-output python "$tmp"; then
     code=1
   fi
   rm -f "$tmp"
   if [[ "$code" -ne 0 ]]; then
-    if [[ "$HAS_GPU" == "1" ]]; then
+    if [[ "$TORCH_CHOICE" == "gpu" ]]; then
       die "Import check failed: torch.cuda.is_available() is false on the GPU path."
     fi
     die "Import check failed."
@@ -551,6 +674,7 @@ get_setup_answers() {
 
 # --- questions (all upfront) -------------------------------------------------
 parse_args "$@"
+detect_gpu
 get_setup_answers
 PACKAGE_NAME="$(safe_package_name "$PROJECT_NAME")"
 if [[ -z "$ENV_NAME" ]]; then
@@ -592,13 +716,30 @@ if [[ "$FOUND" == "1" ]] && conda_env_exists; then
   fi
 fi
 
+get_neuropy_answer
+get_pytorch_answer
+apply_pytorch_choice
+if [[ "$INSTALL_NEUROPY" == "1" ]]; then
+  info "neuro_py: yes"
+else
+  info "neuro_py: no"
+fi
+if [[ "$TORCH_CHOICE" == "gpu" ]]; then
+  gpu_label="$CUDA_TAG"
+  if [[ -z "$gpu_label" ]]; then
+    gpu_label="cu124"
+  fi
+  info "PyTorch: gpu (${gpu_label})"
+else
+  info "PyTorch: ${TORCH_CHOICE}"
+fi
+
 # --- unattended phase --------------------------------------------------------
 if [[ "$FOUND" != "1" ]]; then
   install_miniconda
 fi
 
 initialize_conda_tos
-resolve_gpu
 
 if [[ "$WIPE" == "1" ]]; then
   step "Removing existing environment ${ENV_NAME}"
@@ -629,32 +770,42 @@ invoke_env_pip install --no-input --no-cache-dir \
   pymatreader \
   PyYAML
 
-step "Installing nelpy (--no-deps)"
+step "Installing nelpy import deps, then nelpy (--no-deps)"
+invoke_env_pip install --no-input --no-cache-dir dill packaging
 invoke_env_pip install --no-deps --no-input --no-cache-dir \
   "nelpy @ git+https://github.com/nelpy/nelpy.git"
 
-install_neuropy_editable
+if [[ "$INSTALL_NEUROPY" == "1" ]]; then
+  install_neuropy_editable
+else
+  echo "neuro_py was skipped"
+fi
 
 step "Installing Jupyter kernel ${ENV_NAME}"
 invoke_env_pip install --no-input --no-cache-dir ipykernel
 "$CONDA" run -n "$ENV_NAME" --no-capture-output python -m ipykernel install --user --name "$ENV_NAME" --display-name "$ENV_NAME"
 
-step "Installing PyTorch last"
-invoke_env_pip install torch torchvision torchaudio \
-  --index-url "$TORCH_INDEX_URL" \
-  --no-cache-dir \
-  --no-input
-success "PyTorch installed from ${TORCH_INDEX_URL}"
-
-if [[ "$HAS_GPU" == "1" ]]; then
-  if [[ -n "$CUPY_PACKAGE" ]]; then
-    step "Installing CuPy (${CUPY_PACKAGE})"
-    invoke_env_pip install "$CUPY_PACKAGE" --no-cache-dir --no-input
-  else
-    echo "CuPy was skipped (no wheel mapping for CUDA ${CUDA_VERSION})"
-  fi
+if [[ "$TORCH_CHOICE" == "skip" ]]; then
+  echo "PyTorch was skipped"
+  echo "CuPy was skipped"
 else
-  echo "CuPy was skipped (GPU-only)"
+  step "Installing PyTorch last"
+  invoke_env_pip install torch torchvision torchaudio \
+    --index-url "$TORCH_INDEX_URL" \
+    --no-cache-dir \
+    --no-input
+  success "PyTorch installed from ${TORCH_INDEX_URL}"
+
+  if [[ "$TORCH_CHOICE" == "gpu" ]]; then
+    if [[ -n "$CUPY_PACKAGE" ]]; then
+      step "Installing CuPy (${CUPY_PACKAGE})"
+      invoke_env_pip install "$CUPY_PACKAGE" --no-cache-dir --no-input
+    else
+      echo "CuPy was skipped (no wheel mapping for CUDA ${CUDA_VERSION})"
+    fi
+  else
+    echo "CuPy was skipped (GPU-only)"
+  fi
 fi
 
 write_project_from_templates
