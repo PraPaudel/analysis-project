@@ -8,7 +8,7 @@
 .PARAMETER Name
     Project name. Default: analysis
 .PARAMETER EnvName
-    Conda environment name. Default: the project name
+    Conda environment name. Default: the project name, with conda-invalid characters replaced
 .PARAMETER Python
     Python version. Default: 3.12
 .PARAMETER Yes
@@ -217,6 +217,18 @@ function Get-SafePackageName {
         $pkg = "_$pkg"
     }
     return $pkg
+}
+
+function Get-SafeEnvName {
+    param([string]$Name)
+    # conda rejects space, colon, slash, and hash in environment names
+    $safe = $Name.Trim()
+    $safe = $safe -replace "[\s:/#]+", "_"
+    $safe = $safe.Trim("_")
+    if ([string]::IsNullOrWhiteSpace($safe)) {
+        $safe = $DEFAULT_PROJECT_NAME
+    }
+    return $safe
 }
 
 function Read-ValueOrDefault {
@@ -659,9 +671,9 @@ function Get-SetupAnswers {
 
     if ($Yes) {
         $project = $projectDefault
-        $envDefault = $project
+        $envDefault = Get-SafeEnvName -Name $project
         if (-not [string]::IsNullOrWhiteSpace($EnvName)) {
-            $envDefault = $EnvName.Trim()
+            $envDefault = Get-SafeEnvName -Name $EnvName
         }
         return [pscustomobject]@{
             Project = $project
@@ -671,9 +683,9 @@ function Get-SetupAnswers {
     }
 
     $project = Read-ValueOrDefault -Prompt "Project name" -Default $projectDefault
-    $envDefault = $project
+    $envDefault = Get-SafeEnvName -Name $project
     if (-not [string]::IsNullOrWhiteSpace($EnvName)) {
-        $envDefault = $EnvName.Trim()
+        $envDefault = Get-SafeEnvName -Name $EnvName
     }
     $env = Read-ValueOrDefault -Prompt "Environment name" -Default $envDefault
     $py = Read-ValueOrDefault -Prompt "Python version" -Default $pythonDefault
@@ -688,9 +700,9 @@ function Get-SetupAnswers {
 $answers = Get-SetupAnswers
 $script:ProjectName = Get-SafeFolderName -Name $answers.Project
 $script:PackageName = Get-SafePackageName -Name $script:ProjectName
-$script:EnvName = $answers.Env.Trim()
+$script:EnvName = Get-SafeEnvName -Name $answers.Env
 if ([string]::IsNullOrWhiteSpace($script:EnvName)) {
-    $script:EnvName = $script:ProjectName
+    $script:EnvName = Get-SafeEnvName -Name $script:ProjectName
 }
 $script:PythonVersion = $answers.Python.Trim()
 if ([string]::IsNullOrWhiteSpace($script:PythonVersion)) {

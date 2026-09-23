@@ -108,6 +108,16 @@ safe_package_name() {
   printf '%s' "$pkg"
 }
 
+safe_env_name() {
+  # conda rejects space, colon, slash, and hash in environment names
+  local name="$1"
+  name="$(printf '%s' "$name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s|[[:space:]:/#]|_|g;s/__*/_/g;s/^_//;s/_$//')"
+  if [[ -z "$name" ]]; then
+    name="$DEFAULT_PROJECT_NAME"
+  fi
+  printf '%s' "$name"
+}
+
 read_value_or_default() {
   local prompt="$1"
   local default="$2"
@@ -518,9 +528,9 @@ get_setup_answers() {
   if [[ "$YES" == "1" ]]; then
     PROJECT_NAME="$(safe_folder_name "$project_default")"
     if [[ -n "$ENV_FLAG" ]]; then
-      ENV_NAME="$ENV_FLAG"
+      ENV_NAME="$(safe_env_name "$ENV_FLAG")"
     else
-      ENV_NAME="$PROJECT_NAME"
+      ENV_NAME="$(safe_env_name "$PROJECT_NAME")"
     fi
     PYTHON_VERSION="$python_default"
     return 0
@@ -529,13 +539,13 @@ get_setup_answers() {
   local project env py env_default
   project="$(read_value_or_default "Project name" "$project_default")"
   PROJECT_NAME="$(safe_folder_name "$project")"
-  env_default="$PROJECT_NAME"
+  env_default="$(safe_env_name "$PROJECT_NAME")"
   if [[ -n "$ENV_FLAG" ]]; then
-    env_default="$ENV_FLAG"
+    env_default="$(safe_env_name "$ENV_FLAG")"
   fi
   env="$(read_value_or_default "Environment name" "$env_default")"
   py="$(read_value_or_default "Python version" "$python_default")"
-  ENV_NAME="$(printf '%s' "$env" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  ENV_NAME="$(safe_env_name "$env")"
   PYTHON_VERSION="$(printf '%s' "$py" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 }
 
@@ -544,7 +554,7 @@ parse_args "$@"
 get_setup_answers
 PACKAGE_NAME="$(safe_package_name "$PROJECT_NAME")"
 if [[ -z "$ENV_NAME" ]]; then
-  ENV_NAME="$PROJECT_NAME"
+  ENV_NAME="$(safe_env_name "$PROJECT_NAME")"
 fi
 if [[ -z "$PYTHON_VERSION" ]]; then
   PYTHON_VERSION="$DEFAULT_PYTHON_VERSION"
