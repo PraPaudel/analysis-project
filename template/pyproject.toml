@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "__PACKAGE_NAME__"
+version = "0.1.0"
+description = "__PROJECT_NAME__"
+readme = "README.md"
+requires-python = ">=__PYTHON_VERSION__"
+dependencies = []
+
+[tool.setuptools]
+packages = ["__PACKAGE_NAME__"]
