@@ -1,0 +1,10 @@
+# bridges.toml -- project policy. MAY be committed.
+# Opt-in. Starts EMPTY. Schema: schema/bridges.schema.json
+#
+# Missing source -> ask once, then:
+#   python C:\GitHub\agentkit\install.py add NAME --from-example
+#   python C:\GitHub\agentkit\install.py add NAME --purpose "..." --local C:\GitHub\NAME
+# Plug out:
+#   python C:\GitHub\agentkit\install.py remove NAME
+
+schema = 1

@@ -34,3 +34,9 @@ htmlcov/
 *~
 .DS_Store
 Thumbs.db
+
+# >>> agentkit
+.agentkit/
+.bridge-cache/
+.cursor/rules/00-agentkit.mdc
+# <<< agentkit
